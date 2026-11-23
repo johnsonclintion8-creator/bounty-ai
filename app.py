@@ -116,7 +116,7 @@ st.title("🛡️ BountyAI — Recon & Vulnerability Triage")
 tab_live, tab_files, tab_history = st.tabs(["🌐 Live Target Scan", "📂 Upload JS / Logs", "📄 Saved Reports"])
 
 with tab_live:
-    target_url = st.text_input("Target URL (Authorized Scope Only)", placeholder="https://herokuapp.com")
+    target_url = st.text_input("Target URL (Authorized Scope Only)", placeholder="https://example.com")
     if st.button("Run Recon & AI Triage", type="primary", use_container_width=True):
         if not target_url.strip():
             st.warning("Enter a target URL first.")
