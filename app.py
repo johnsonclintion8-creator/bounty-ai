@@ -1,5 +1,5 @@
 import re
-﻿import os, html
+import os, html
 import streamlit as st
 from fpdf import FPDF
 from scanner import run_recon, extract_js_endpoints
