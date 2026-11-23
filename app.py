@@ -29,7 +29,7 @@ def build_burp_scope(target: str, recon_data: dict) -> str:
     host = parsed.netloc.split(":")[0] or target
     hosts = [host] + [s for s in recon_data.get("subdomains", []) if s and s != host]
     include_rules = [
-        {"enabled": True, "file": "^/.*", "host": f"^{re.escape(h)}\$", "port": "", "protocol": "any"}
+        {"enabled": True, "file": "^/.*", "host": rf"^{re.escape(h)}$", "port": "", "protocol": "any"}
         for h in hosts[:100]
     ]
     exclude_rules = [
@@ -209,7 +209,7 @@ with tab_live:
         d1.download_button("?? Markdown (.md)", st.session_state["last_report"], f"{base_name}.md", "text/markdown", use_container_width=True)
         d2.download_button("?? Branded HTML (.html)", html_export, f"{base_name}.html", "text/html", use_container_width=True)
         d3.download_button("?? Client PDF (.pdf)", pdf_export, f"{base_name}.pdf", "application/pdf", use_container_width=True)
-        d4.download_button("?? Burp Scope (.json)", burp_export, f"{base_name}_burp_scope.json", "application/json", use_container_width=True)", pdf_export, f"{base_name}.pdf", "application/pdf", use_container_width=True)
+        d4.download_button("⬇ Burp Scope (.json)", burp_export, f"{base_name}_burp_scope.json", "application/json", use_container_width=True)
         st.markdown(st.session_state["last_report"])
         with st.expander("View Raw Recon JSON"):
             st.json(st.session_state["last_raw"])
