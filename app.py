@@ -33,7 +33,7 @@ def build_burp_scope(target: str, recon_data: dict) -> str:
         for h in hosts[:100]
     ]
     exclude_rules = [
-        {"enabled": True, "file": r".*\.(css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)\$", "host": ".*", "port": "", "protocol": "any"}
+        {"enabled": True, "file": r".*\.(css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$", "host": ".*", "port": "", "protocol": "any"}
     ]
     return json.dumps({"target": {"scope": {"advanced_mode": True, "include": include_rules, "exclude": exclude_rules}}}, indent=2)
 
@@ -62,7 +62,7 @@ def build_pdf_report(target: str, markdown_body: str, grade_info: dict) -> bytes
         if not line or line == "---":
             pdf.ln(2)
             continue
-        clean = re.sub(r"\*\*(.*?)\*\*", r"", line).replace("`", "")
+        clean = re.sub(r"\*\*(.*?)\*\*", lambda m: m.group(1), line).replace("`", "")
         if clean.startswith("### "):
             pdf.ln(2)
             pdf.set_font("Helvetica", "B", 11)
