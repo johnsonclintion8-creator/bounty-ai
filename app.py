@@ -22,6 +22,69 @@ def build_html_report(target: str, markdown_body: str, grade_info: dict) -> str:
 <style>body {{ font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }} .header {{ background: #0f172a; color: #f8fafc; padding: 24px; border-radius: 10px; }} .badge {{ background: #ef4444; color: white; padding: 4px 12px; border-radius: 6px; }} pre {{ white-space: pre-wrap; background: #f8fafc; padding: 20px; border-radius: 8px; }}</style>
 </head><body><div class="header"><h1>🛡️ BountyAI Security Report</h1><p><strong>Target:</strong> {html.escape(target)} | <span class="badge">Grade: {grade} ({score})</span></p><p><strong>Missing:</strong> {html.escape(missing)}</p></div><pre>{escaped}</pre></body></html>"""
 
+def parse_burp_xml(raw_xml: str) -> dict:
+    import base64
+    from urllib.parse import urlparse, parse_qs
+    from xml.parsers import expat
+
+    items, curr, tag, buf = [], {}, "", []
+
+    def start_el(name, attrs):
+        nonlocal curr, tag, buf
+        tag = name
+        buf = []
+        if name == "item":
+            curr = {"is_b64": False}
+        elif name in ("request", "response") and attrs.get("base64") == "true":
+            curr["is_b64"] = True
+
+    def char_data(data):
+        buf.append(data)
+
+    def end_el(name):
+        nonlocal curr, tag, buf
+        val = "".join(buf).strip()
+        if name in ("url", "method", "status", "path"):
+            curr[name] = val
+        elif name == "request":
+            if curr.get("is_b64") and val:
+                try:
+                    val = base64.b64decode(val).decode("utf-8", errors="ignore")
+                except Exception:
+                    val = ""
+            curr["req_body"] = val.split("\r\n\r\n", 1)[-1][:500]
+            curr["is_b64"] = False
+        elif name == "item" and curr.get("url"):
+            items.append(curr)
+            curr = {}
+        tag = ""
+        buf = []
+
+    parser = expat.ParserCreate()
+    parser.StartElementHandler = start_el
+    parser.CharacterDataHandler = char_data
+    parser.EndElementHandler = end_el
+    parser.Parse(raw_xml.encode("utf-8", errors="ignore"), True)
+
+    seen, endpoints = set(), []
+    for it in items:
+        u = urlparse(it.get("url", ""))
+        key = (it.get("method", "GET"), u.netloc, u.path)
+        if key in seen:
+            continue
+        seen.add(key)
+        params = list(parse_qs(u.query).keys())
+        body = it.get("req_body", "")
+        if "=" in body and not body.lstrip().startswith("<"):
+            params += [kv.split("=")[0] for kv in body.split("&") if "=" in kv][:15]
+        endpoints.append({
+            "method": it.get("method", "GET"),
+            "url": f"{u.scheme}://{u.netloc}{u.path}",
+            "status": it.get("status", ""),
+            "params": list(dict.fromkeys(params))[:20],
+        })
+    return {"total_items": len(items), "unique_endpoints": endpoints[:100]}
+
 def build_burp_scope(target: str, recon_data: dict) -> str:
     import json
     from urllib.parse import urlparse
@@ -217,11 +280,13 @@ with tab_live:
             st.json(st.session_state["last_raw"])
 
 with tab_files:
-    uploaded = st.file_uploader("Drop a .js, .txt, .json, or .log file", type=["js", "txt", "json", "log"])
+    uploaded = st.file_uploader("Drop a Burp Suite .xml export, or a .js, .txt, .json, .log file", type=["xml", "js", "txt", "json", "log"])
     if uploaded is not None:
         raw_text = uploaded.read().decode("utf-8", errors="ignore")
-        endpoints = extract_js_endpoints(raw_text) if uploaded.name.endswith(".js") else []
-        st.write(f"**File:** `{uploaded.name}` | **Extracted Paths:** {len(endpoints)}")
+        is_burp_xml = uploaded.name.lower().endswith(".xml")
+        burp_summary = parse_burp_xml(raw_text) if is_burp_xml else None
+        endpoints = [e["url"] for e in burp_summary["unique_endpoints"]] if burp_summary else (extract_js_endpoints(raw_text) if uploaded.name.endswith(".js") else [])
+        st.write(f"**File:** `{uploaded.name}` | **Extracted Endpoints/Paths:** {len(endpoints)}")
         if st.button("Analyze Uploaded File with AI"):
             allowed, quota_msg = can_user_scan(uid)
             if not allowed:
@@ -229,7 +294,8 @@ with tab_files:
             else:
                 with st.spinner("Analyzing file..."):
                     try:
-                        file_rep = analyze_recon({"file": uploaded.name, "paths": endpoints, "preview": raw_text[:15000]}, api_key=user_api_key)
+                        payload = {"file": uploaded.name, "burp_http_history": burp_summary} if burp_summary else {"file": uploaded.name, "paths": endpoints, "preview": raw_text[:15000]}
+                        file_rep = analyze_recon(payload, api_key=user_api_key)
                         increment_user_quota(uid)
                         save_cloud_report(uid, f"File: {uploaded.name}", "File Audit", file_rep)
                         st.markdown(file_rep)
