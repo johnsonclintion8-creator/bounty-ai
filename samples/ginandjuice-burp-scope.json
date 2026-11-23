@@ -1,0 +1,25 @@
+{
+  "target": {
+    "scope": {
+      "advanced_mode": true,
+      "include": [
+        {
+          "enabled": true,
+          "file": "^/.*",
+          "host": "^ginandjuice\\.shop$",
+          "port": "",
+          "protocol": "any"
+        }
+      ],
+      "exclude": [
+        {
+          "enabled": true,
+          "file": ".*\\.(css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$",
+          "host": ".*",
+          "port": "",
+          "protocol": "any"
+        }
+      ]
+    }
+  }
+}
