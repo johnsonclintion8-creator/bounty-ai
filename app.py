@@ -1,3 +1,4 @@
+from database import save_beta_feedback
 import re
 import os, html
 import streamlit as st
@@ -243,6 +244,16 @@ with st.sidebar:
     max_pages = st.slider("Max Internal Pages to Crawl", 1, 30, 10)
     st.divider()
     user_api_key = st.text_input("Optional Gemini API Key", type="password")
+    with st.expander("Beta Feedback / Report Bug"):
+        fb_cat = st.selectbox("Type", ["Feature Request", "Bug Report", "Triage Quality"], key="fb_cat")
+        fb_msg = st.text_area("What should we improve?", placeholder="Tell us what target you scanned or what feature would help most...", height=90, key="fb_msg")
+        if st.button("Send Feedback", key="fb_send"):
+            if fb_msg.strip():
+                try:
+                    save_beta_feedback(uid, user_info.get("email", ""), fb_cat, fb_msg)
+                    st.success("Thanks! Feedback saved.")
+                except Exception as e:
+                    st.error(f"Could not save feedback: {e}")
 
 st.title("🛡️ BountyAI — Recon & Vulnerability Triage")
 tab_live, tab_files, tab_history = st.tabs(["🌐 Live Target Scan", "📂 Upload JS / Logs", "📄 Saved Reports"])
