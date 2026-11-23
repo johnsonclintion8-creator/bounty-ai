@@ -1,57 +1,41 @@
 ﻿import os
 import json
-import time
 import datetime
 from google import genai
-from google.genai import types
 
-SYSTEM_PROMPT = """You are an expert application security researcher assisting with authorized bug bounty and CTF reconnaissance.
-Analyze the structured reconnaissance JSON data (HTTP headers, subdomains, crawled internal links, URL query parameters, HTML forms, JavaScript files, extracted JS endpoints, and robots.txt).
-Provide a clean, actionable Markdown report organized into:
-1. Executive Attack Surface Summary
-2. High-Value Paths, Subdomains & JS Endpoints
-3. Detected Technologies & Missing Security Headers
-4. Priority Input Vectors (Forms & Query Parameters for SQLi, XSS, IDOR, Auth Bypass)
-5. Step-by-Step Manual Testing Plan"""
+MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
 
-FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
+def analyze_recon(recon_data: dict, api_key: str = "") -> str:
+    key = (api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+    if not key:
+        raise ValueError("Missing GEMINI_API_KEY. Add it in Streamlit Secrets or the sidebar.")
+    client = genai.Client(api_key=key)
+    prompt = f"""You are an expert bug bounty triage assistant. Analyze this reconnaissance JSON for an authorized target and produce a clear, actionable security report in Markdown.
 
-def analyze_recon(recon_data: dict, api_key: str | None = None) -> str:
-    key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY")
-    client = genai.Client(api_key=key) if key else genai.Client()
-    payload = json.dumps(recon_data, indent=2)
+Include:
+1. **Executive Summary & Attack Surface Score**
+2. **Detected Tech Stack & Missing Security Headers**
+3. **High-Priority Manual Test Vectors** (specific URLs, forms, parameters, or JS endpoints to test for SQLi, XSS, IDOR, Auth Bypass, or Info Disclosure—never execute attacks, only provide safe manual verification steps)
+4. **Remediation Recommendations**
+
+Recon Data:
+{json.dumps(recon_data, indent=2)[:28000]}
+"""
     last_err = None
-
-    for model_name in FALLBACK_MODELS:
+    for model_name in MODELS:
         try:
-            res = client.models.generate_content(
-                model=model_name,
-                contents=f"Analyze this authorized reconnaissance output:\n\n{payload}",
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    temperature=0.2,
-                ),
-            )
-            return f"*Generated using `{model_name}`*\n\n" + res.text
+            resp = client.models.generate_content(model=model_name, contents=prompt)
+            if resp and resp.text:
+                return resp.text
         except Exception as e:
             last_err = e
-            if "503" in str(e) or "429" in str(e) or "404" in str(e):
-                time.sleep(1)
-                continue
-            raise
     raise RuntimeError(f"All Gemini models busy or unavailable. Last error: {last_err}")
 
-def save_report(target: str, markdown_text: str) -> str:
+def save_report(target: str, markdown_body: str) -> str:
     os.makedirs("reports", exist_ok=True)
-    clean = (
-        target.replace("https://", "")
-        .replace("http://", "")
-        .replace("/", "_")
-        .replace(":", "_")
-        .strip("_")
-    )
+    safe_name = "".join(c if c.isalnum() else "_" for c in target)[:40].strip("_") or "target"
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join("reports", f"{clean}_{ts}.md")
+    path = os.path.join("reports", f"{safe_name}_{ts}.md")
     with open(path, "w", encoding="utf-8") as f:
-        f.write(markdown_text)
+        f.write(markdown_body)
     return path
