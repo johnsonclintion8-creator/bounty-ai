@@ -1,3 +1,4 @@
+import re
 ﻿import os, html
 import streamlit as st
 from fpdf import FPDF
@@ -21,6 +22,21 @@ def build_html_report(target: str, markdown_body: str, grade_info: dict) -> str:
 <style>body {{ font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }} .header {{ background: #0f172a; color: #f8fafc; padding: 24px; border-radius: 10px; }} .badge {{ background: #ef4444; color: white; padding: 4px 12px; border-radius: 6px; }} pre {{ white-space: pre-wrap; background: #f8fafc; padding: 20px; border-radius: 8px; }}</style>
 </head><body><div class="header"><h1>🛡️ BountyAI Security Report</h1><p><strong>Target:</strong> {html.escape(target)} | <span class="badge">Grade: {grade} ({score})</span></p><p><strong>Missing:</strong> {html.escape(missing)}</p></div><pre>{escaped}</pre></body></html>"""
 
+def build_burp_scope(target: str, recon_data: dict) -> str:
+    import json
+    from urllib.parse import urlparse
+    parsed = urlparse(target if "://" in target else "https://" + target)
+    host = parsed.netloc.split(":")[0] or target
+    hosts = [host] + [s for s in recon_data.get("subdomains", []) if s and s != host]
+    include_rules = [
+        {"enabled": True, "file": "^/.*", "host": f"^{re.escape(h)}\$", "port": "", "protocol": "any"}
+        for h in hosts[:100]
+    ]
+    exclude_rules = [
+        {"enabled": True, "file": r".*\.(css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)\$", "host": ".*", "port": "", "protocol": "any"}
+    ]
+    return json.dumps({"target": {"scope": {"advanced_mode": True, "include": include_rules, "exclude": exclude_rules}}}, indent=2)
+
 def build_pdf_report(target: str, markdown_body: str, grade_info: dict) -> bytes:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -29,8 +45,40 @@ def build_pdf_report(target: str, markdown_body: str, grade_info: dict) -> bytes
     pdf.cell(0, 10, f"BountyAI Security Report: {target[:60]}", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 8, f"Header Grade: {grade_info.get('grade', 'N/A')} ({grade_info.get('score', '0/6')})", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
-    pdf.multi_cell(0, 6, markdown_body.encode("latin-1", "replace").decode("latin-1"))
+    pdf.ln(3)
+    in_code = False
+    for raw_line in markdown_body.splitlines():
+        line = raw_line.encode("latin-1", "replace").decode("latin-1").strip()
+        if line.startswith("```"):
+            in_code = not in_code
+            pdf.ln(1)
+            continue
+        if in_code:
+            pdf.set_font("Courier", "", 8.5)
+            pdf.multi_cell(0, 5, "  " + line)
+            continue
+        if not line or line == "---":
+            pdf.ln(2)
+            continue
+        clean = re.sub(r"\*\*(.*?)\*\*", r"", line).replace("`", "")
+        if clean.startswith("### "):
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.multi_cell(0, 6, clean[4:])
+        elif clean.startswith("## "):
+            pdf.ln(3)
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.multi_cell(0, 7, clean[3:])
+        elif clean.startswith("# "):
+            pdf.ln(3)
+            pdf.set_font("Helvetica", "B", 14)
+            pdf.multi_cell(0, 8, clean[2:])
+        elif clean.startswith(("* ", "- ")):
+            pdf.set_font("Helvetica", "", 9.5)
+            pdf.multi_cell(0, 5.5, "  - " + clean[2:])
+        else:
+            pdf.set_font("Helvetica", "", 9.5)
+            pdf.multi_cell(0, 5.5, clean)
     return bytes(pdf.output())
 
 params = st.query_params
@@ -156,10 +204,12 @@ with tab_live:
         grade_data = st.session_state["last_raw"].get("security_grade", {})
         html_export = build_html_report(st.session_state.get("last_target", "target"), st.session_state["last_report"], grade_data)
         pdf_export = build_pdf_report(st.session_state.get("last_target", "target"), st.session_state["last_report"], grade_data)
-        d1, d2, d3 = st.columns(3)
-        d1.download_button("⬇️ Markdown (.md)", st.session_state["last_report"], f"{base_name}.md", "text/markdown", use_container_width=True)
-        d2.download_button("⬇️ Branded HTML (.html)", html_export, f"{base_name}.html", "text/html", use_container_width=True)
-        d3.download_button("⬇️ Client PDF (.pdf)", pdf_export, f"{base_name}.pdf", "application/pdf", use_container_width=True)
+        burp_export = build_burp_scope(st.session_state.get("last_target", "target"), st.session_state["last_raw"])
+        d1, d2, d3, d4 = st.columns(4)
+        d1.download_button("?? Markdown (.md)", st.session_state["last_report"], f"{base_name}.md", "text/markdown", use_container_width=True)
+        d2.download_button("?? Branded HTML (.html)", html_export, f"{base_name}.html", "text/html", use_container_width=True)
+        d3.download_button("?? Client PDF (.pdf)", pdf_export, f"{base_name}.pdf", "application/pdf", use_container_width=True)
+        d4.download_button("?? Burp Scope (.json)", burp_export, f"{base_name}_burp_scope.json", "application/json", use_container_width=True)", pdf_export, f"{base_name}.pdf", "application/pdf", use_container_width=True)
         st.markdown(st.session_state["last_report"])
         with st.expander("View Raw Recon JSON"):
             st.json(st.session_state["last_raw"])
