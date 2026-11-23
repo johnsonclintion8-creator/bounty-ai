@@ -92,13 +92,14 @@ def compute_scan_diff(uid: int, target_url: str, recon_data: dict) -> dict:
         past = []
     if not past:
         return {"has_previous": False}
-    prev_md = past.get("markdown_body", "")
-    new_js = [j for j in recon_data.get("js_files", []) if j.split("/")[-1] and j.split("/")[-1] not in prev_md]
+    prev = next(iter(past), {})
+    prev_md = prev.get("markdown_body", "")
+    new_js = [j for j in recon_data.get("js_files", []) if j.rpartition("/")[-1] and j.rpartition("/")[-1] not in prev_md]
     new_eps = [e for e in recon_data.get("js_endpoints", []) if e not in prev_md]
     return {
         "has_previous": True,
-        "previous_scan_date": str(past.get("created_at", ""))[:19],
-        "previous_grade": past.get("grade", "N/A"),
+        "previous_scan_date": str(prev.get("created_at", ""))[:19],
+        "previous_grade": prev.get("grade", "N/A"),
         "new_js_assets": new_js[:15],
         "new_endpoints": new_eps[:20],
     }
