@@ -1,22 +1,37 @@
-﻿import os
-import html
+﻿import os, html
 import streamlit as st
+from fpdf import FPDF
 from scanner import run_recon, extract_js_endpoints
 from analyzer import analyze_recon, save_report
-from database import init_db, register_user, authenticate_user, check_and_increment_quota, upgrade_user_to_pro, get_user_status, FREE_MONTHLY_LIMIT
-from billing import create_checkout_session, verify_checkout_session, DEV_PROMO_CODE
+from database import (
+    init_db, register_user, authenticate_user, reset_user_password,
+    can_user_scan, increment_user_quota, upgrade_user_to_pro,
+    get_user_status, save_cloud_report, get_user_reports, FREE_MONTHLY_LIMIT
+)
+from billing import create_checkout_session, verify_checkout_session, ADMIN_PROMO_CODE
 
 init_db()
 st.set_page_config(page_title="BountyAI Recon SaaS", page_icon="🛡️", layout="wide")
 
 def build_html_report(target: str, markdown_body: str, grade_info: dict) -> str:
     escaped = html.escape(markdown_body)
-    grade = grade_info.get("grade", "N/A")
-    score = grade_info.get("score", "N/A")
+    grade, score = grade_info.get("grade", "N/A"), grade_info.get("score", "N/A")
     missing = ", ".join(grade_info.get("missing", [])) or "None"
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>BountyAI Report - {html.escape(target)}</title>
 <style>body {{ font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }} .header {{ background: #0f172a; color: #f8fafc; padding: 24px; border-radius: 10px; }} .badge {{ background: #ef4444; color: white; padding: 4px 12px; border-radius: 6px; }} pre {{ white-space: pre-wrap; background: #f8fafc; padding: 20px; border-radius: 8px; }}</style>
 </head><body><div class="header"><h1>🛡️ BountyAI Security Report</h1><p><strong>Target:</strong> {html.escape(target)} | <span class="badge">Grade: {grade} ({score})</span></p><p><strong>Missing:</strong> {html.escape(missing)}</p></div><pre>{escaped}</pre></body></html>"""
+
+def build_pdf_report(target: str, markdown_body: str, grade_info: dict) -> bytes:
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.cell(0, 10, f"BountyAI Security Report: {target[:60]}", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 8, f"Header Grade: {grade_info.get('grade', 'N/A')} ({grade_info.get('score', '0/6')})", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+    pdf.multi_cell(0, 6, markdown_body.encode("latin-1", "replace").decode("latin-1"))
+    return bytes(pdf.output())
 
 params = st.query_params
 if "session_id" in params:
@@ -30,8 +45,8 @@ if "session_id" in params:
 
 if "user" not in st.session_state:
     st.title("🛡️ BountyAI — Authorized Recon & AI Triage")
-    st.caption("Sign in or create a free account (3 scans/month included) to launch your workspace.")
-    tab_login, tab_signup = st.tabs(["🔑 Sign In", "✨ Create Account"])
+    st.caption("Attack surface mapping, tech fingerprinting, secret detection & AI vulnerability triage.")
+    tab_login, tab_signup, tab_reset = st.tabs(["🔑 Sign In", "✨ Create Account", "🔄 Reset Password"])
     with tab_login:
         with st.form("login_form"):
             login_email = st.text_input("Email")
@@ -47,11 +62,23 @@ if "user" not in st.session_state:
         with st.form("signup_form"):
             reg_email = st.text_input("Email")
             reg_pw = st.text_input("Password (min 6 characters)", type="password")
+            agree_tos = st.checkbox("I agree to scan only targets where I have explicit written authorization or CTF scope.")
             if st.form_submit_button("Create Free Account", type="primary", use_container_width=True):
-                ok, msg = register_user(reg_email, reg_pw)
-                st.success(msg + " Switch to Sign In.") if ok else st.error(msg)
+                if not agree_tos:
+                    st.error("You must accept the Authorized Scope Terms to create an account.")
+                else:
+                    ok, msg = register_user(reg_email, reg_pw)
+                    st.success(msg + " Switch to Sign In.") if ok else st.error(msg)
+    with tab_reset:
+        with st.form("reset_form"):
+            rst_email = st.text_input("Account Email")
+            rst_pw = st.text_input("New Password (min 6 characters)", type="password")
+            if st.form_submit_button("Update Password", use_container_width=True):
+                ok, msg = reset_user_password(rst_email, rst_pw)
+                st.success(msg) if ok else st.error(msg)
     st.stop()
-user_info = get_user_status(st.session_state["user"]["id"])
+uid = st.session_state["user"]["id"]
+user_info = get_user_status(uid)
 tier, used = user_info["tier"], user_info["scans_used"]
 
 with st.sidebar:
@@ -61,16 +88,17 @@ with st.sidebar:
         st.info(f"**Plan:** FREE ({remaining}/{FREE_MONTHLY_LIMIT} scans left this month)")
         with st.expander("🚀 Upgrade to Pro ($29.99/mo)", expanded=True):
             if st.button("Checkout with Stripe", type="primary", use_container_width=True):
-                ok, res_url = create_checkout_session(user_info["email"], st.session_state["user"]["id"])
+                ok, res_url = create_checkout_session(user_info["email"], uid)
                 st.markdown(f"[👉 Complete Payment on Stripe]({res_url})") if ok else st.warning(res_url)
-            promo = st.text_input("Dev / Promo Code", placeholder="Enter code")
-            if st.button("Redeem Code", use_container_width=True):
-                if promo.strip() == DEV_PROMO_CODE:
-                    upgrade_user_to_pro(st.session_state["user"]["id"])
-                    st.success("Upgraded to PRO!")
-                    st.rerun()
-                else:
-                    st.error("Invalid promo code.")
+            if ADMIN_PROMO_CODE:
+                promo = st.text_input("Promo Code", placeholder="Enter code")
+                if st.button("Redeem Code", use_container_width=True):
+                    if promo.strip() == ADMIN_PROMO_CODE:
+                        upgrade_user_to_pro(uid)
+                        st.success("Upgraded to PRO!")
+                        st.rerun()
+                    else:
+                        st.error("Invalid promo code.")
     else:
         st.success("**Plan:** PRO (Unlimited Scans)")
     if st.button("Log Out", use_container_width=True):
@@ -88,37 +116,50 @@ st.title("🛡️ BountyAI — Recon & Vulnerability Triage")
 tab_live, tab_files, tab_history = st.tabs(["🌐 Live Target Scan", "📂 Upload JS / Logs", "📄 Saved Reports"])
 
 with tab_live:
-    target_url = st.text_input("Target URL (Authorized Scope Only)", placeholder="http://vulnweb.com")
+    target_url = st.text_input("Target URL (Authorized Scope Only)", placeholder="https://herokuapp.com")
     if st.button("Run Recon & AI Triage", type="primary", use_container_width=True):
         if not target_url.strip():
             st.warning("Enter a target URL first.")
         else:
-            allowed, quota_msg = check_and_increment_quota(st.session_state["user"]["id"])
+            allowed, quota_msg = can_user_scan(uid)
             if not allowed:
                 st.error(quota_msg)
             else:
-                with st.spinner("Crawling target, grading headers, and extracting forms/JS..."):
+                with st.spinner("Fingerprinting stack, probing paths, scanning JS secrets & crawling..."):
                     recon_data = run_recon(target_url, ctf_mode=ctf_mode, max_pages=max_pages, allow_subdomains=allow_subs)
-                g = recon_data.get("security_grade", {})
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Header Grade", f"{g.get('grade', '?')} ({g.get('score', '0/6')})")
-                c2.metric("Pages Crawled", len(recon_data["crawled_pages"]))
-                c3.metric("Forms Found", len(recon_data["forms"]))
-                c4.metric("JS Endpoints", len(recon_data["js_endpoints"]))
-                with st.spinner("Generating AI vulnerability triage report..."):
-                    try:
-                        report_md = analyze_recon(recon_data, api_key=user_api_key)
-                        saved_path = save_report(target_url, report_md)
-                        st.session_state["last_report"], st.session_state["last_raw"] = report_md, recon_data
-                        st.session_state["last_path"], st.session_state["last_target"] = saved_path, target_url
-                    except Exception as e:
-                        st.error(f"AI Analysis Error: {e}")
+                if not recon_data.get("status_code"):
+                    st.error(f"Target unreachable or blocked request ({', '.join(recon_data.get('errors', ['No response']))}). Your scan quota was NOT charged.")
+                else:
+                    g = recon_data.get("security_grade", {})
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Header Grade", f"{g.get('grade', '?')} ({g.get('score', '0/6')})")
+                    c2.metric("Pages Crawled", len(recon_data["crawled_pages"]))
+                    c3.metric("Forms & Params", len(recon_data["forms"]) + len(recon_data["query_params"]))
+                    c4.metric("Exposed Paths / Secrets", len(recon_data["exposed_paths"]) + len(recon_data["leaked_secrets"]))
+                    if recon_data.get("technologies"):
+                        st.info("**Detected Stack:** " + ", ".join(recon_data["technologies"]))
+                    if recon_data.get("leaked_secrets"):
+                        st.error(f"**Potential Secrets Detected in Source/JS:** {recon_data['leaked_secrets']}")
+                    with st.spinner("Generating AI vulnerability triage report..."):
+                        try:
+                            report_md = analyze_recon(recon_data, api_key=user_api_key)
+                            increment_user_quota(uid)
+                            save_cloud_report(uid, target_url, f"{g.get('grade', '?')} ({g.get('score', '0/6')})", report_md)
+                            saved_path = save_report(target_url, report_md)
+                            st.session_state["last_report"], st.session_state["last_raw"] = report_md, recon_data
+                            st.session_state["last_path"], st.session_state["last_target"] = saved_path, target_url
+                        except Exception as e:
+                            st.error(f"AI Analysis Error (Quota NOT charged): {e}")
+
     if "last_report" in st.session_state:
         base_name = os.path.basename(st.session_state["last_path"]).replace(".md", "")
-        html_export = build_html_report(st.session_state.get("last_target", "target"), st.session_state["last_report"], st.session_state["last_raw"].get("security_grade", {}))
-        d1, d2 = st.columns(2)
-        d1.download_button("⬇️ Download Markdown (.md)", st.session_state["last_report"], f"{base_name}.md", "text/markdown", use_container_width=True)
-        d2.download_button("⬇️ Download Branded HTML (.html)", html_export, f"{base_name}.html", "text/html", use_container_width=True)
+        grade_data = st.session_state["last_raw"].get("security_grade", {})
+        html_export = build_html_report(st.session_state.get("last_target", "target"), st.session_state["last_report"], grade_data)
+        pdf_export = build_pdf_report(st.session_state.get("last_target", "target"), st.session_state["last_report"], grade_data)
+        d1, d2, d3 = st.columns(3)
+        d1.download_button("⬇️ Markdown (.md)", st.session_state["last_report"], f"{base_name}.md", "text/markdown", use_container_width=True)
+        d2.download_button("⬇️ Branded HTML (.html)", html_export, f"{base_name}.html", "text/html", use_container_width=True)
+        d3.download_button("⬇️ Client PDF (.pdf)", pdf_export, f"{base_name}.pdf", "application/pdf", use_container_width=True)
         st.markdown(st.session_state["last_report"])
         with st.expander("View Raw Recon JSON"):
             st.json(st.session_state["last_raw"])
@@ -130,22 +171,26 @@ with tab_files:
         endpoints = extract_js_endpoints(raw_text) if uploaded.name.endswith(".js") else []
         st.write(f"**File:** `{uploaded.name}` | **Extracted Paths:** {len(endpoints)}")
         if st.button("Analyze Uploaded File with AI"):
-            allowed, quota_msg = check_and_increment_quota(st.session_state["user"]["id"])
+            allowed, quota_msg = can_user_scan(uid)
             if not allowed:
                 st.error(quota_msg)
             else:
                 with st.spinner("Analyzing file..."):
                     try:
-                        st.markdown(analyze_recon({"file": uploaded.name, "paths": endpoints, "preview": raw_text[:15000]}, api_key=user_api_key))
+                        file_rep = analyze_recon({"file": uploaded.name, "paths": endpoints, "preview": raw_text[:15000]}, api_key=user_api_key)
+                        increment_user_quota(uid)
+                        save_cloud_report(uid, f"File: {uploaded.name}", "File Audit", file_rep)
+                        st.markdown(file_rep)
                     except Exception as e:
-                        st.error(f"AI Analysis Error: {e}")
+                        st.error(f"AI Analysis Error (Quota NOT charged): {e}")
 
 with tab_history:
-    if os.path.exists("reports") and os.listdir("reports"):
-        selected = st.selectbox("Select a report", sorted(os.listdir("reports"), reverse=True))
-        if selected:
-            content = open(os.path.join("reports", selected), "r", encoding="utf-8").read()
-            st.download_button("⬇️ Download Report", content, selected, "text/markdown")
-            st.markdown(content)
+    cloud_reps = get_user_reports(uid)
+    if cloud_reps:
+        labels = [f"{r['created_at']} — {r['target']} (Grade: {r['grade']})" for r in cloud_reps]
+        choice = st.selectbox("Select a saved cloud report", range(len(labels)), format_func=lambda i: labels[i])
+        chosen = cloud_reps[choice]
+        st.download_button("⬇️ Download Markdown (.md)", chosen["markdown_body"], f"bountyai_report_{chosen['id']}.md", "text/markdown")
+        st.markdown(chosen["markdown_body"])
     else:
-        st.info("No reports saved yet.")
+        st.info("No saved cloud reports yet. Run a scan to save your first report permanently.")

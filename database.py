@@ -146,3 +146,17 @@ def get_user_reports(user_id: int) -> list[dict]:
     rows = c.fetchall()
     conn.close()
     return [{"id": r[0], "target": r[1], "grade": r[2], "markdown_body": r[3], "created_at": r[4]} for r in rows]
+
+def check_and_increment_quota(user_id: int) -> tuple[bool, str]:
+    ok, msg = can_user_scan(user_id)
+    if not ok:
+        return False, msg
+    increment_user_quota(user_id)
+    return True, "OK"
+
+def check_and_increment_quota(user_id: int) -> tuple[bool, str]:
+    ok, msg = can_user_scan(user_id)
+    if not ok:
+        return False, msg
+    increment_user_quota(user_id)
+    return True, "OK"
