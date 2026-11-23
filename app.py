@@ -85,6 +85,24 @@ def parse_burp_xml(raw_xml: str) -> dict:
         })
     return {"total_items": len(items), "unique_endpoints": endpoints[:100]}
 
+def compute_scan_diff(uid: int, target_url: str, recon_data: dict) -> dict:
+    try:
+        past = [r for r in get_user_reports(uid) if r.get("target", "").rstrip("/") == target_url.rstrip("/")]
+    except Exception:
+        past = []
+    if not past:
+        return {"has_previous": False}
+    prev_md = past.get("markdown_body", "")
+    new_js = [j for j in recon_data.get("js_files", []) if j.split("/")[-1] and j.split("/")[-1] not in prev_md]
+    new_eps = [e for e in recon_data.get("js_endpoints", []) if e not in prev_md]
+    return {
+        "has_previous": True,
+        "previous_scan_date": str(past.get("created_at", ""))[:19],
+        "previous_grade": past.get("grade", "N/A"),
+        "new_js_assets": new_js[:15],
+        "new_endpoints": new_eps[:20],
+    }
+
 def build_burp_scope(target: str, recon_data: dict) -> str:
     import json
     from urllib.parse import urlparse
@@ -259,9 +277,30 @@ with tab_live:
                         st.info("**Detected Stack:** " + ", ".join(recon_data["technologies"]))
                     if recon_data.get("leaked_secrets"):
                         st.error(f"**Potential Secrets Detected in Source/JS:** {recon_data['leaked_secrets']}")
+                    osint = recon_data.get("passive_osint", {})
+                    shodan_info = osint.get("shodan_internetdb", {})
+                    if shodan_info.get("ports") or shodan_info.get("vulns"):
+                        st.info(f"**Passive Shodan InternetDB ({shodan_info.get('ip', '')}):** Open Ports `{shodan_info.get('ports', [])}` | Known CVEs `{shodan_info.get('vulns', [])}`")
+                    if osint.get("exposed_api_schemas") or osint.get("exposed_sourcemaps"):
+                        st.warning(f"**Exposed Schemas / Source Maps Found:** {osint.get('exposed_api_schemas', []) + osint.get('exposed_sourcemaps', [])}")
+                    dorks = osint.get("dork_links", {})
+                    if dorks:
+                        st.markdown(
+                            f"**1-Click Passive Dorks:** [GitHub Secrets]({dorks.get('github_secrets','')}) | "
+                            f"[GitHub Endpoints]({dorks.get('github_endpoints','')}) | "
+                            f"[Google Subdomains]({dorks.get('google_subdomains','')}) | "
+                            f"[Google Exposed Files]({dorks.get('google_files','')})"
+                        )
+                    scan_diff = compute_scan_diff(uid, target_url, recon_data)
+                    if scan_diff.get("has_previous"):
+                        st.success(
+                            f"**Attack Surface Drift Monitor (vs. {scan_diff.get('previous_scan_date')}):** "
+                            f"{len(scan_diff.get('new_js_assets', []))} new JS assets, "
+                            f"{len(scan_diff.get('new_endpoints', []))} new endpoints detected."
+                        )
                     with st.spinner("Generating AI vulnerability triage report..."):
                         try:
-                            report_md = analyze_recon(recon_data, api_key=user_api_key, program_policy=program_policy)
+                            report_md = analyze_recon(recon_data, api_key=user_api_key, program_policy=program_policy, scan_diff=scan_diff)
                             increment_user_quota(uid)
                             save_cloud_report(uid, target_url, f"{g.get('grade', '?')} ({g.get('score', '0/6')})", report_md)
                             saved_path = save_report(target_url, report_md)

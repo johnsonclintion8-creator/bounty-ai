@@ -99,6 +99,78 @@ def get_subdomains(target_url: str) -> list[str]:
         pass
     return []
 
+
+def enrich_passive_osint_and_schemas(base_url: str, js_files: list) -> dict:
+    import socket
+    from urllib.parse import urlparse, quote_plus, parse_qs
+    parsed = urlparse(base_url)
+    host = parsed.netloc.split(":")
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    out = {
+        "shodan_internetdb": {},
+        "wayback_urls": [],
+        "wayback_params": [],
+        "exposed_api_schemas": [],
+        "exposed_sourcemaps": [],
+        "dork_links": {
+            "github_secrets": f"https://github.com{quote_plus(host)}%22+%28api_key+OR+secret+OR+token+OR+password%29&type=code",
+            "github_endpoints": f"https://github.com{quote_plus(host)}%22+%28%22%2Fapi%2F%22+OR+%22graphql%22+OR+%22internal%22%29&type=code",
+            "google_subdomains": f"https://google.com*.{quote_plus(host)}",
+            "google_files": f"https://google.com{quote_plus(host)}+ext%3Aenv+OR+ext%3Alog+OR+ext%3Abak+OR+ext%3Asql+OR+ext%3Ajson",
+        },
+    }
+    try:
+        ip = socket.gethostbyname(host)
+        r = requests.get(f"https://shodan.io{ip}", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            out["shodan_internetdb"] = {
+                "ip": ip,
+                "ports": data.get("ports", []),
+                "vulns": data.get("vulns", [])[:15],
+                "cpes": data.get("cpes", [])[:10],
+                "tags": data.get("tags", []),
+            }
+    except Exception:
+        pass
+
+    try:
+        wb = requests.get(
+            f"https://archive.org*.{host}/*&output=json&fl=original&collapse=urlkey&limit=40",
+            timeout=6,
+        )
+        if wb.status_code == 200:
+            rows = wb.json()[1:]
+            urls, params = [], set()
+            for row in rows:
+                u = row
+                urls.append(u)
+                for k in parse_qs(urlparse(u).query).keys():
+                    params.add(k)
+            out["wayback_urls"] = urls[:25]
+            out["wayback_params"] = sorted(params)[:25]
+    except Exception:
+        pass
+
+    for schema_path in ("/swagger.json", "/openapi.json", "/v2/api-docs", "/api-docs"):
+        try:
+            sr = requests.get(origin + schema_path, headers=HEADERS, timeout=4, allow_redirects=False)
+            if sr.status_code == 200 and any(k in sr.text[:400].lower() for k in ("openapi", "swagger", "paths")):
+                out["exposed_api_schemas"].append(origin + schema_path)
+        except Exception:
+            pass
+
+    for js_u in js_files[:8]:
+        map_url = js_u.split("?") + ".map"
+        try:
+            mr = requests.head(map_url, headers=HEADERS, timeout=3, allow_redirects=False)
+            if mr.status_code == 200:
+                out["exposed_sourcemaps"].append(map_url)
+        except Exception:
+            pass
+
+    return out
+
 def run_recon(target: str, ctf_mode: bool = False, max_pages: int = 15, allow_subdomains: bool = False) -> dict:
     url = normalize_url(target)
     parsed_root = urlparse(url)
@@ -193,4 +265,5 @@ def run_recon(target: str, ctf_mode: bool = False, max_pages: int = 15, allow_su
         if key not in seen_sec:
             seen_sec.add(key)
             results["leaked_secrets"].append(sec)
+    results["passive_osint"] = enrich_passive_osint_and_schemas(url, results.get("js_files", []))
     return results

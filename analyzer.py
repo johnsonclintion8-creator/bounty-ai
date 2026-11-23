@@ -28,7 +28,7 @@ def _discover_models(client) -> list[str]:
             ordered.append(candidate)
     return ordered[:6]
 
-def analyze_recon(recon_data: dict, api_key: str = "", program_policy: str = "") -> str:
+def analyze_recon(recon_data: dict, api_key: str = "", program_policy: str = "", scan_diff: dict | None = None) -> str:
     import json
     client = _get_client(api_key)
     policy_instruction = ""
@@ -41,8 +41,17 @@ def analyze_recon(recon_data: dict, api_key: str = "", program_policy: str = "")
             "[IN-SCOPE / ELIGIBLE], [OUT-OF-SCOPE - DO NOT TEST], or [EXCLUDED / N/A RISK]. "
             "If missing security headers or cookie flags are excluded, mark them [EXCLUDED / N/A RISK] and omit them from High-Priority Manual Test Vectors.\n\n"
         )
+
+    diff_instruction = ""
+    if scan_diff and scan_diff.get("has_previous"):
+        diff_instruction = (
+            "ATTACK SURFACE DRIFT DETECTED (Compare against prior scan of this target):\n"
+            + json.dumps(scan_diff, indent=2)
+            + "\nInclude a concise 'What Changed Since Last Scan' callout highlighting newly added JS files, endpoints, or open ports.\n\n"
+        )
     prompt = (
         policy_instruction
+        + diff_instruction
         + "You are an expert application security researcher performing non-destructive bug bounty triage.\n"
         + "Analyze the following reconnaissance data and produce a concise, structured markdown triage report with:\n"
         + "1. Executive Summary & Tech Stack\n"
