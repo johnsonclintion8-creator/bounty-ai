@@ -230,6 +230,12 @@ tab_live, tab_files, tab_history = st.tabs(["🌐 Live Target Scan", "📂 Uploa
 
 with tab_live:
     target_url = st.text_input("Target URL (Authorized Scope Only)", placeholder="https://example.com")
+    with st.expander("Program Scope & Rules-of-Engagement (Optional ? Filters Out-of-Scope & N/A Noise)"):
+        program_policy = st.text_area(
+            "Paste HackerOne / Bugcrowd In-Scope Assets & Exclusions",
+            placeholder="Example:\nIn Scope: *.example.com, ://example.com\nOut of Scope: ://example.com, missing HTTP security headers, self-XSS, rate limiting",
+            height=110,
+        )
     if st.button("Run Recon & AI Triage", type="primary", use_container_width=True):
         if not target_url.strip():
             st.warning("Enter a target URL first.")
@@ -255,7 +261,7 @@ with tab_live:
                         st.error(f"**Potential Secrets Detected in Source/JS:** {recon_data['leaked_secrets']}")
                     with st.spinner("Generating AI vulnerability triage report..."):
                         try:
-                            report_md = analyze_recon(recon_data, api_key=user_api_key)
+                            report_md = analyze_recon(recon_data, api_key=user_api_key, program_policy=program_policy)
                             increment_user_quota(uid)
                             save_cloud_report(uid, target_url, f"{g.get('grade', '?')} ({g.get('score', '0/6')})", report_md)
                             saved_path = save_report(target_url, report_md)
@@ -271,9 +277,9 @@ with tab_live:
         pdf_export = build_pdf_report(st.session_state.get("last_target", "target"), st.session_state["last_report"], grade_data)
         burp_export = build_burp_scope(st.session_state.get("last_target", "target"), st.session_state["last_raw"])
         d1, d2, d3, d4 = st.columns(4)
-        d1.download_button("?? Markdown (.md)", st.session_state["last_report"], f"{base_name}.md", "text/markdown", use_container_width=True)
-        d2.download_button("?? Branded HTML (.html)", html_export, f"{base_name}.html", "text/html", use_container_width=True)
-        d3.download_button("?? Client PDF (.pdf)", pdf_export, f"{base_name}.pdf", "application/pdf", use_container_width=True)
+        d1.download_button("Download Markdown (.md)", st.session_state["last_report"], f"{base_name}.md", "text/markdown", use_container_width=True)
+        d2.download_button("Download Branded HTML (.html)", html_export, f"{base_name}.html", "text/html", use_container_width=True)
+        d3.download_button("Download Client PDF (.pdf)", pdf_export, f"{base_name}.pdf", "application/pdf", use_container_width=True)
         d4.download_button("⬇ Burp Scope (.json)", burp_export, f"{base_name}_burp_scope.json", "application/json", use_container_width=True)
         st.markdown(st.session_state["last_report"])
         with st.expander("View Raw Recon JSON"):
@@ -295,7 +301,7 @@ with tab_files:
                 with st.spinner("Analyzing file..."):
                     try:
                         payload = {"file": uploaded.name, "burp_http_history": burp_summary} if burp_summary else {"file": uploaded.name, "paths": endpoints, "preview": raw_text[:15000]}
-                        file_rep = analyze_recon(payload, api_key=user_api_key)
+                        file_rep = analyze_recon(payload, api_key=user_api_key, program_policy=program_policy)
                         increment_user_quota(uid)
                         save_cloud_report(uid, f"File: {uploaded.name}", "File Audit", file_rep)
                         st.markdown(file_rep)

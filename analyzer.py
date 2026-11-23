@@ -28,12 +28,25 @@ def _discover_models(client) -> list[str]:
             ordered.append(candidate)
     return ordered[:6]
 
-def analyze_recon(recon_data: dict, api_key: str = "") -> str:
+def analyze_recon(recon_data: dict, api_key: str = "", program_policy: str = "") -> str:
     key = (api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
     if not key:
         raise ValueError("Missing GEMINI_API_KEY. Add it in Streamlit Secrets or the sidebar.")
     client = genai.Client(api_key=key)
-    prompt = f"""You are an expert bug bounty triage assistant. Analyze this reconnaissance JSON for an authorized target and produce a clear, actionable security report in Markdown.
+
+    policy_instruction = ""
+    if program_policy and program_policy.strip():
+        policy_instruction = f"""
+IMPORTANT ? PROGRAM SCOPE & RULES-OF-ENGAGEMENT GATEKEEPER:
+The researcher provided the following HackerOne/Bugcrowd program scope & exclusion rules:
+"""{program_policy.strip()[:6000]}"""
+
+You MUST begin the report with a section titled "## 0. Program Scope & Eligibility Gatekeeper" that evaluates every discovered subdomain, endpoint, and potential finding against the rules above:
+- Tag each item clearly as **[IN-SCOPE / ELIGIBLE]**, **[OUT-OF-SCOPE ? DO NOT TEST]**, or **[EXCLUDED / N/A RISK]**.
+- If the program excludes missing HTTP security headers (HSTS, CSP, X-Frame-Options, etc.), cookie flags, or version disclosure, explicitly mark them as **[EXCLUDED / N/A RISK]** and omit them from your High-Priority Manual Test Vectors so the researcher does not waste time or risk an Informative/N/A closure.
+"""
+
+    prompt = f"""{policy_instruction}You are an expert bug bounty triage assistant. Analyze this reconnaissance JSON for an authorized target and produce a clear, actionable security report in Markdown.
 
 Include:
 1. **Executive Summary & Attack Surface Score**
