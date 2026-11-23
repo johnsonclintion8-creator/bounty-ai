@@ -30,7 +30,10 @@ def _discover_models(client) -> list[str]:
 
 def analyze_recon(recon_data: dict, api_key: str = "", program_policy: str = "", scan_diff: dict | None = None) -> str:
     import json
-    client = _get_client(api_key)
+    key = (api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+    if not key:
+        raise ValueError("Missing GEMINI_API_KEY.")
+    client = genai.Client(api_key=key)
     policy_instruction = ""
     if program_policy and program_policy.strip():
         policy_instruction = (
