@@ -1,15 +1,31 @@
 ﻿import os, sqlite3, hashlib, datetime
+from urllib.parse import quote_plus
 
 DB_PATH = "bounty_ai.db"
 FREE_MONTHLY_LIMIT = 3
 SUPABASE_DB_URL = os.environ.get("SUPABASE_DB_URL", "").strip()
 
-def _get_conn():
-    if SUPABASE_DB_URL:
-        import psycopg2
-        return psycopg2.connect(SUPABASE_DB_URL), True
-    return sqlite3.connect(DB_PATH), False
+def _safe_pg_dsn(raw_url: str) -> str:
+    if "://" in raw_url and "@" in raw_url:
+        scheme, rest = raw_url.split("://", 1)
+        creds, hostpart = rest.rsplit("@", 1)
+        if ":" in creds:
+            user, pw = creds.split(":", 1)
+            if "%" not in pw:
+                pw = quote_plus(pw)
+            raw_url = f"{scheme}://{user}:{pw}@{hostpart}"
+    if "sslmode=" not in raw_url:
+        raw_url += ("&sslmode=require" if "?" in raw_url else "?sslmode=require")
+    return raw_url
 
+def _get_conn():
+    if SUPABASE_DB_URL and "YOUR_DB_PASSWORD" not in SUPABASE_DB_URL:
+        try:
+            import psycopg2
+            return psycopg2.connect(_safe_pg_dsn(SUPABASE_DB_URL), connect_timeout=8), True
+        except Exception as e:
+            print(f"[DB Warning] Supabase fallback to SQLite: {e}")
+    return sqlite3.connect(DB_PATH), False
 def init_db():
     conn, is_pg = _get_conn()
     c = conn.cursor()
