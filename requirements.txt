@@ -3,3 +3,5 @@ requests
 beautifulsoup4
 google-genai
 stripe
+psycopg2-binary
+fpdf2

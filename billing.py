@@ -3,14 +3,15 @@ import stripe
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "").strip()
 STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "").strip()
-DEV_PROMO_CODE = "BOUNTYPRO2027"
+APP_URL = os.environ.get("APP_URL", "http://localhost:8501").strip().rstrip("/")
+ADMIN_PROMO_CODE = os.environ.get("ADMIN_PROMO_CODE", "").strip()
 
 def is_stripe_configured() -> bool:
     return bool(STRIPE_SECRET_KEY and STRIPE_PRICE_ID)
 
-def create_checkout_session(user_email: str, user_id: int, app_url: str = "http://localhost:8501") -> tuple[bool, str]:
+def create_checkout_session(user_email: str, user_id: int) -> tuple[bool, str]:
     if not is_stripe_configured():
-        return False, "Stripe keys not set yet. Set STRIPE_SECRET_KEY and STRIPE_PRICE_ID in your environment, or use the Dev Promo Code below to test Pro."
+        return False, "Live Stripe keys are being finalized. Add STRIPE_SECRET_KEY and STRIPE_PRICE_ID in Streamlit Secrets to enable card checkout."
     stripe.api_key = STRIPE_SECRET_KEY
     try:
         session = stripe.checkout.Session.create(
@@ -18,8 +19,8 @@ def create_checkout_session(user_email: str, user_id: int, app_url: str = "http:
             customer_email=user_email,
             line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
             metadata={"user_id": str(user_id)},
-            success_url=f"{app_url}/?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{app_url}/?canceled=true",
+            success_url=f"{APP_URL}/?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{APP_URL}/?canceled=true",
         )
         return True, session.url
     except Exception as e:
