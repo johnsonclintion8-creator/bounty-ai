@@ -104,7 +104,7 @@ def enrich_passive_osint_and_schemas(base_url: str, js_files: list) -> dict:
     import socket
     from urllib.parse import urlparse, quote_plus, parse_qs
     parsed = urlparse(base_url)
-    host = parsed.netloc.split(":")
+    host = parsed.netloc.split(":")[0]
     origin = f"{parsed.scheme}://{parsed.netloc}"
     out = {
         "shodan_internetdb": {},
@@ -143,7 +143,7 @@ def enrich_passive_osint_and_schemas(base_url: str, js_files: list) -> dict:
             rows = wb.json()[1:]
             urls, params = [], set()
             for row in rows:
-                u = row
+                u = row[0]
                 urls.append(u)
                 for k in parse_qs(urlparse(u).query).keys():
                     params.add(k)
@@ -161,7 +161,7 @@ def enrich_passive_osint_and_schemas(base_url: str, js_files: list) -> dict:
             pass
 
     for js_u in js_files[:8]:
-        map_url = js_u.split("?") + ".map"
+        map_url = js_u.split("?")[0] + ".map"
         try:
             mr = requests.head(map_url, headers=HEADERS, timeout=3, allow_redirects=False)
             if mr.status_code == 200:
