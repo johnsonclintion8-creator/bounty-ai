@@ -176,3 +176,28 @@ def check_and_increment_quota(user_id: int) -> tuple[bool, str]:
         return False, msg
     increment_user_quota(user_id)
     return True, "OK"
+
+
+def save_beta_feedback(user_id: int, email: str, category: str, message: str) -> None:
+    if not message or not message.strip():
+        return
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS beta_feedback (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER,
+                    email TEXT,
+                    category TEXT,
+                    message TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """)
+            cur.execute(
+                "INSERT INTO beta_feedback (user_id, email, category, message) VALUES (%s, %s, %s, %s);",
+                (user_id, email, category, message.strip()[:2000]),
+            )
+        conn.commit()
+    finally:
+        conn.close()
