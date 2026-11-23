@@ -41,13 +41,15 @@ def build_pdf_report(target: str, markdown_body: str, grade_info: dict) -> bytes
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    w = pdf.epw
     pdf.set_font("Helvetica", "B", 15)
-    pdf.cell(0, 10, f"BountyAI Security Report: {target[:60]}", new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(w, 9, f"BountyAI Security Report: {target[:60]}", wrapmode="CHAR")
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 8, f"Header Grade: {grade_info.get('grade', 'N/A')} ({grade_info.get('score', '0/6')})", new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(w, 7, f"Header Grade: {grade_info.get('grade', 'N/A')} ({grade_info.get('score', '0/6')})", wrapmode="CHAR")
     pdf.ln(3)
     in_code = False
     for raw_line in markdown_body.splitlines():
+        pdf.set_x(pdf.l_margin)
         line = raw_line.encode("latin-1", "replace").decode("latin-1").strip()
         if line.startswith("```"):
             in_code = not in_code
@@ -55,7 +57,7 @@ def build_pdf_report(target: str, markdown_body: str, grade_info: dict) -> bytes
             continue
         if in_code:
             pdf.set_font("Courier", "", 8.5)
-            pdf.multi_cell(0, 5, "  " + line)
+            pdf.multi_cell(w, 5, "  " + line, wrapmode="CHAR")
             continue
         if not line or line == "---":
             pdf.ln(2)
@@ -64,21 +66,21 @@ def build_pdf_report(target: str, markdown_body: str, grade_info: dict) -> bytes
         if clean.startswith("### "):
             pdf.ln(2)
             pdf.set_font("Helvetica", "B", 11)
-            pdf.multi_cell(0, 6, clean[4:])
+            pdf.multi_cell(w, 6, clean[4:], wrapmode="CHAR")
         elif clean.startswith("## "):
             pdf.ln(3)
             pdf.set_font("Helvetica", "B", 12)
-            pdf.multi_cell(0, 7, clean[3:])
+            pdf.multi_cell(w, 7, clean[3:], wrapmode="CHAR")
         elif clean.startswith("# "):
             pdf.ln(3)
             pdf.set_font("Helvetica", "B", 14)
-            pdf.multi_cell(0, 8, clean[2:])
+            pdf.multi_cell(w, 8, clean[2:], wrapmode="CHAR")
         elif clean.startswith(("* ", "- ")):
             pdf.set_font("Helvetica", "", 9.5)
-            pdf.multi_cell(0, 5.5, "  - " + clean[2:])
+            pdf.multi_cell(w, 5.5, "  - " + clean[2:], wrapmode="CHAR")
         else:
             pdf.set_font("Helvetica", "", 9.5)
-            pdf.multi_cell(0, 5.5, clean)
+            pdf.multi_cell(w, 5.5, clean, wrapmode="CHAR")
     return bytes(pdf.output())
 
 params = st.query_params
